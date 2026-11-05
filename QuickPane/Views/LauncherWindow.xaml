@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="QuickPane.Views.LauncherWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:helpers="using:QuickPane.Helpers"
+    xmlns:vm="using:QuickPane.ViewModels"
+    Title="QuickPane">
+
+    <Grid x:Name="RootGrid" PreviewKeyDown="RootGrid_PreviewKeyDown">
+        <Grid.Resources>
+            <!-- タブ (ピル型) -->
+            <Style x:Key="TabItemStyle" TargetType="ListViewItem">
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Margin" Value="0,0,2,0" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <!-- 選択がフォーカスに追従するため、フォーカス枠は表示せず選択状態で示す -->
+                <Setter Property="UseSystemFocusVisuals" Value="False" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ListViewItem">
+                            <ListViewItemPresenter
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch"
+                                Background="{TemplateBinding Background}"
+                                CheckMode="Inline"
+                                ContentMargin="{TemplateBinding Padding}"
+                                ContentTransitions="{TemplateBinding ContentTransitions}"
+                                Control.IsTemplateFocusTarget="True"
+                                CornerRadius="8"
+                                DisabledOpacity="0.4"
+                                DragOpacity="0.8"
+                                FocusVisualMargin="{TemplateBinding FocusVisualMargin}"
+                                Foreground="{TemplateBinding Foreground}"
+                                PointerOverBackground="{ThemeResource TabPointerOverBrush}"
+                                PointerOverForeground="{ThemeResource TextFillColorPrimaryBrush}"
+                                PressedBackground="{ThemeResource TabPointerOverBrush}"
+                                ReorderHintOffset="8"
+                                SelectedBackground="{ThemeResource TabSelectedBrush}"
+                                SelectedForeground="{ThemeResource TextFillColorPrimaryBrush}"
+                                SelectedPointerOverBackground="{ThemeResource TabSelectedBrush}"
+                                SelectedPressedBackground="{ThemeResource TabSelectedBrush}"
+                                SelectionCheckMarkVisualEnabled="False"
+                                SelectionIndicatorVisualEnabled="False" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- アイテムのタイル -->
+            <Style x:Key="TileItemStyle" TargetType="GridViewItem">
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Margin" Value="3" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+                <!-- 選択がフォーカスに追従するため、フォーカス枠は表示せず選択状態で示す -->
+                <Setter Property="UseSystemFocusVisuals" Value="False" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="GridViewItem">
+                            <ListViewItemPresenter
+                                HorizontalContentAlignment="Stretch"
+                                VerticalContentAlignment="Stretch"
+                                Background="{TemplateBinding Background}"
+                                CheckMode="Overlay"
+                                ContentMargin="{TemplateBinding Padding}"
+                                ContentTransitions="{TemplateBinding ContentTransitions}"
+                                Control.IsTemplateFocusTarget="True"
+                                CornerRadius="10"
+                                DisabledOpacity="0.4"
+                                DragOpacity="0.8"
+                                FocusVisualMargin="{TemplateBinding FocusVisualMargin}"
+                                Foreground="{TemplateBinding Foreground}"
+                                PointerOverBackground="Transparent"
+                                PointerOverForeground="{ThemeResource TextFillColorPrimaryBrush}"
+                                PressedBackground="Transparent"
+                                ReorderHintOffset="12"
+                                SelectedBackground="{ThemeResource TileSelectedBrush}"
+                                SelectedBorderBrush="{ThemeResource TileSelectedBorderBrush}"
+                                SelectedForeground="{ThemeResource TextFillColorPrimaryBrush}"
+                                SelectedPointerOverBackground="{ThemeResource TileSelectedBrush}"
+                                SelectedPressedBackground="{ThemeResource TileSelectedBrush}"
+                                SelectionCheckMarkVisualEnabled="False" />
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="HeaderButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+                <Setter Property="Width" Value="32" />
+                <Setter Property="Height" Value="30" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="8" />
+            </Style>
+        </Grid.Resources>
+
+        <!-- ガラス風の外周ハイライトと上部の光沢 -->
+        <Border
+            x:Name="GlassLayer"
+            Background="{ThemeResource GlassSheenBrush}"
+            BorderBrush="{ThemeResource GlassStrokeBrush}"
+            BorderThickness="1"
+            IsHitTestVisible="False" />
+
+        <Grid x:Name="ContentRoot" Padding="10,8,10,10">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ヘッダー: タブ・タブ追加・ピン留め・設定 -->
+            <Grid Grid.Row="0" ColumnSpacing="4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <ListView
+                    x:Name="TabList"
+                    Height="34"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    AllowDrop="True"
+                    CanDragItems="True"
+                    CanReorderItems="True"
+                    ContextRequested="TabList_ContextRequested"
+                    DragItemsCompleted="TabList_DragItemsCompleted"
+                    DragItemsStarting="TabList_DragItemsStarting"
+                    ItemContainerStyle="{StaticResource TabItemStyle}"
+                    ItemsSource="{x:Bind ViewModel.Tabs}"
+                    ScrollViewer.HorizontalScrollBarVisibility="Hidden"
+                    ScrollViewer.HorizontalScrollMode="Enabled"
+                    ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                    ScrollViewer.VerticalScrollMode="Disabled"
+                    SelectedIndex="{x:Bind ViewModel.SelectedTabIndex, Mode=TwoWay}"
+                    SelectionMode="Single">
+                    <ListView.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <ItemsStackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ListView.ItemsPanel>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TabViewModel">
+                            <Grid
+                                Padding="14,0"
+                                AllowDrop="True"
+                                Background="Transparent"
+                                CornerRadius="8"
+                                DragLeave="Tab_DragLeave"
+                                DragOver="Tab_DragOver"
+                                Drop="Tab_Drop">
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    FontSize="13"
+                                    Text="{x:Bind Name, Mode=OneWay}"
+                                    TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                    <ListView.Footer>
+                        <Button
+                            Margin="2,0,0,0"
+                            VerticalAlignment="Center"
+                            Click="AddTabButton_Click"
+                            Style="{StaticResource HeaderButtonStyle}"
+                            ToolTipService.ToolTip="タブを追加">
+                            <FontIcon FontSize="12" Glyph="&#xE710;" />
+                        </Button>
+                    </ListView.Footer>
+                </ListView>
+
+                <StackPanel
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    Orientation="Horizontal"
+                    Spacing="2">
+                    <ToggleButton
+                        Width="32"
+                        Height="30"
+                        Padding="0"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        CornerRadius="8"
+                        IsChecked="{x:Bind ViewModel.IsPinned, Mode=TwoWay}"
+                        ToolTipService.ToolTip="ピン留め (フォーカスが外れても閉じない)">
+                        <FontIcon FontSize="13" Glyph="{x:Bind helpers:Bind.PinGlyph(ViewModel.IsPinned), Mode=OneWay}" />
+                    </ToggleButton>
+                    <Button
+                        Click="SettingsButton_Click"
+                        Style="{StaticResource HeaderButtonStyle}"
+                        ToolTipService.ToolTip="設定">
+                        <FontIcon FontSize="14" Glyph="&#xE713;" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <Rectangle
+                Grid.Row="1"
+                Height="1"
+                Margin="4,6,4,4"
+                Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+            <!-- アイテム -->
+            <Grid Grid.Row="2">
+                <GridView
+                    x:Name="ItemGrid"
+                    Padding="0,2,0,2"
+                    HorizontalAlignment="Center"
+                    AllowDrop="True"
+                    Background="Transparent"
+                    CanDragItems="True"
+                    CanReorderItems="True"
+                    ContextRequested="ItemGrid_ContextRequested"
+                    DragItemsCompleted="ItemGrid_DragItemsCompleted"
+                    DragItemsStarting="ItemGrid_DragItemsStarting"
+                    DragOver="ItemGrid_DragOver"
+                    Drop="ItemGrid_Drop"
+                    IsItemClickEnabled="True"
+                    ItemClick="ItemGrid_ItemClick"
+                    ItemContainerStyle="{StaticResource TileItemStyle}"
+                    ItemsSource="{x:Bind ViewModel.SelectedTab.Items, Mode=OneWay}"
+                    PreviewKeyDown="ItemGrid_PreviewKeyDown"
+                    SelectionMode="Single">
+                    <GridView.ItemContainerTransitions>
+                        <TransitionCollection>
+                            <AddDeleteThemeTransition />
+                            <ReorderThemeTransition />
+                        </TransitionCollection>
+                    </GridView.ItemContainerTransitions>
+                    <GridView.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <ItemsWrapGrid Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </GridView.ItemsPanel>
+                    <GridView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ItemViewModel">
+                            <Grid
+                                Width="{x:Bind Layout.TileWidth, Mode=OneWay}"
+                                Height="{x:Bind Layout.TileHeight, Mode=OneWay}"
+                                Background="Transparent"
+                                PointerCanceled="Tile_PointerExited"
+                                PointerEntered="Tile_PointerEntered"
+                                PointerExited="Tile_PointerExited"
+                                PointerPressed="Tile_PointerPressed"
+                                PointerReleased="Tile_PointerReleased"
+                                ToolTipService.ToolTip="{x:Bind ToolTip, Mode=OneWay}">
+                                <Grid.ScaleTransition>
+                                    <Vector3Transition Duration="0:0:0.16" />
+                                </Grid.ScaleTransition>
+
+                                <!-- ホバー時の光沢 (ガラスの粒) -->
+                                <Border
+                                    Background="{ThemeResource TileSheenBrush}"
+                                    BorderBrush="{ThemeResource TileSheenStrokeBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="10"
+                                    IsHitTestVisible="False"
+                                    Opacity="0">
+                                    <Border.OpacityTransition>
+                                        <ScalarTransition Duration="0:0:0.16" />
+                                    </Border.OpacityTransition>
+                                </Border>
+
+                                <StackPanel Padding="4,10,4,4" Spacing="6">
+                                    <Grid
+                                        Width="{x:Bind Layout.IconSize, Mode=OneWay}"
+                                        Height="{x:Bind Layout.IconSize, Mode=OneWay}"
+                                        HorizontalAlignment="Center">
+                                        <FontIcon
+                                            FontSize="{x:Bind Layout.GlyphSize, Mode=OneWay}"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Glyph="{x:Bind DefaultGlyph, Mode=OneWay}"
+                                            Visibility="{x:Bind helpers:Bind.VisibleIfNull(Icon), Mode=OneWay}" />
+                                        <Image Source="{x:Bind Icon, Mode=OneWay}" Stretch="Uniform" />
+                                    </Grid>
+                                    <TextBlock
+                                        HorizontalAlignment="Center"
+                                        FontSize="{x:Bind Layout.FontSize, Mode=OneWay}"
+                                        LineHeight="15"
+                                        MaxLines="2"
+                                        Text="{x:Bind Name, Mode=OneWay}"
+                                        TextAlignment="Center"
+                                        TextTrimming="CharacterEllipsis"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </GridView.ItemTemplate>
+                </GridView>
+
+                <!-- アイテム未登録時の案内 -->
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    IsHitTestVisible="False"
+                    Spacing="10"
+                    Visibility="{x:Bind helpers:Bind.VisibleIf(ViewModel.SelectedTab.IsEmpty), Mode=OneWay}">
+                    <FontIcon
+                        FontSize="28"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        Glyph="&#xE896;" />
+                    <TextBlock
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="ファイルやフォルダをドラッグ＆ドロップして登録"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+
+                <ProgressBar
+                    VerticalAlignment="Top"
+                    IsIndeterminate="True"
+                    Visibility="{x:Bind helpers:Bind.VisibleIf(ViewModel.IsBusy), Mode=OneWay}" />
+
+                <!-- 起動エラーのインライン通知 -->
+                <InfoBar
+                    Margin="4,0,4,2"
+                    VerticalAlignment="Bottom"
+                    IsClosable="True"
+                    IsOpen="{x:Bind ViewModel.IsErrorOpen, Mode=TwoWay}"
+                    Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                    Severity="Error"
+                    Title="{x:Bind ViewModel.ErrorTitle, Mode=OneWay}" />
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

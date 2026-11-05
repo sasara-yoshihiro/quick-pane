@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="QuickPane.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <!-- ランチャー外周のガラス風ハイライト -->
+                    <LinearGradientBrush x:Key="GlassStrokeBrush" StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#B3FFFFFF" />
+                        <GradientStop Offset="1" Color="#33FFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="GlassSheenBrush" StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#40FFFFFF" />
+                        <GradientStop Offset="0.35" Color="#00FFFFFF" />
+                    </LinearGradientBrush>
+                    <!-- アイテムのホバー時の光沢 -->
+                    <LinearGradientBrush x:Key="TileSheenBrush" StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#8CFFFFFF" />
+                        <GradientStop Offset="1" Color="#26FFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="TileSheenStrokeBrush" StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#E6FFFFFF" />
+                        <GradientStop Offset="1" Color="#40FFFFFF" />
+                    </LinearGradientBrush>
+                    <SolidColorBrush x:Key="TileSelectedBrush" Opacity="0.16" Color="{ThemeResource SystemAccentColor}" />
+                    <SolidColorBrush x:Key="TileSelectedBorderBrush" Opacity="0.55" Color="{ThemeResource SystemAccentColor}" />
+                    <SolidColorBrush x:Key="TabSelectedBrush" Color="#B3FFFFFF" />
+                    <SolidColorBrush x:Key="TabPointerOverBrush" Color="#59FFFFFF" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <LinearGradientBrush x:Key="GlassStrokeBrush" StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#4DFFFFFF" />
+                        <GradientStop Offset="1" Color="#14FFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="GlassSheenBrush" StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#14FFFFFF" />
+                        <GradientStop Offset="0.35" Color="#00FFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="TileSheenBrush" StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#2EFFFFFF" />
+                        <GradientStop Offset="1" Color="#0AFFFFFF" />
+                    </LinearGradientBrush>
+                    <LinearGradientBrush x:Key="TileSheenStrokeBrush" StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#59FFFFFF" />
+                        <GradientStop Offset="1" Color="#0FFFFFFF" />
+                    </LinearGradientBrush>
+                    <SolidColorBrush x:Key="TileSelectedBrush" Opacity="0.22" Color="{ThemeResource SystemAccentColorLight2}" />
+                    <SolidColorBrush x:Key="TileSelectedBorderBrush" Opacity="0.6" Color="{ThemeResource SystemAccentColorLight2}" />
+                    <SolidColorBrush x:Key="TabSelectedBrush" Color="#24FFFFFF" />
+                    <SolidColorBrush x:Key="TabPointerOverBrush" Color="#12FFFFFF" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

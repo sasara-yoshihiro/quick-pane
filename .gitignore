@@ -1,0 +1,16 @@
+# Build outputs
+bin/
+obj/
+Build/*
+!Build/build.bat
+
+# Runtime data / logs
+Data/
+Log/
+*.log
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
