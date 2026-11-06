@@ -20,18 +20,21 @@ if /i "%RID%"=="win-x64" (
 ) else (
     echo [ERROR] Unsupported runtime identifier: %RID%
     echo         Use win-x64 or win-arm64.
+    timeout /t 5
     exit /b 1
 )
 
 where dotnet >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] dotnet command not found. Install the .NET 10 SDK.
+    timeout /t 5
     exit /b 1
 )
 
 tasklist /fi "imagename eq QuickPane.exe" 2>nul | find /i "QuickPane.exe" >nul
 if not errorlevel 1 (
     echo [ERROR] QuickPane is running. Exit QuickPane from the tray icon menu and try again.
+    timeout /t 5
     exit /b 1
 )
 
@@ -53,9 +56,11 @@ if not exist "%OUT%\Log" mkdir "%OUT%\Log"
 
 echo.
 echo === Build succeeded: %OUT%
+timeout /t 5
 exit /b 0
 
 :error
 echo.
 echo [ERROR] Build failed.
+timeout /t 5
 exit /b 1

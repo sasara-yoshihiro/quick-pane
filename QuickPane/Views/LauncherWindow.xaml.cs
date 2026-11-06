@@ -16,7 +16,10 @@ using Windows.Graphics;
 using Windows.Storage;
 using Windows.System;
 using Windows.UI.Core;
+using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.UI.Shell;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace QuickPane.Views;
 
@@ -26,6 +29,13 @@ namespace QuickPane.Views;
 public sealed partial class LauncherWindow : Window
 {
     private const double MinWidth = 400;
+
+    private const double MinResizeWidth = 300;
+
+    /// <summary>ホイール 1 ノッチ分の回転量</summary>
+    private const int WheelDelta = 120;
+
+    private static readonly nuint SubclassId = 1;
 
     private const double ChromeWidth = 28;
 
@@ -62,6 +72,20 @@ public sealed partial class LauncherWindow : Window
 
     private TabViewModel? _selectedTabBeforeDrag;
 
+    private bool _isDraggingWindow;
+
+    private PointInt32 _dragStartCursor;
+
+    private PointInt32 _dragStartWindow;
+
+    private SizeInt32 _sizeBeforeResize;
+
+    private int _tabWheelDelta;
+
+    private static LauncherWindow? s_instance;
+
+    private static SUBCLASSPROC? s_subclassProc;
+
     internal LauncherWindow(LauncherViewModel viewModel)
     {
         ViewModel = viewModel;
@@ -69,9 +93,9 @@ public sealed partial class LauncherWindow : Window
 
         _hwnd = WindowHelper.GetHandle(this);
 
-        // タイトルバー・ウィンドウ枠なし、常に最前面、タスクバー・Alt + Tab に表示しない
+        // タイトルバーなし (端のドラッグでサイズ変更可)、常に最前面、タスクバー・Alt + Tab に表示しない
         var presenter = OverlappedPresenter.Create();
-        presenter.IsResizable = false;
+        presenter.IsResizable = true;
         presenter.IsMaximizable = false;
         presenter.IsMinimizable = false;
         presenter.IsAlwaysOnTop = true;
@@ -80,6 +104,11 @@ public sealed partial class LauncherWindow : Window
         AppWindow.IsShownInSwitchers = false;
         WindowHelper.SetToolWindow(_hwnd);
         WindowHelper.SetRoundedCorners(_hwnd);
+
+        // サイズ変更の開始・終了と最小サイズの処理
+        s_instance = this;
+        s_subclassProc ??= SubclassProc;
+        PInvoke.SetWindowSubclass(_hwnd, s_subclassProc, SubclassId, 0);
         if (!WindowHelper.IsWindows11)
         {
             GlassLayer.CornerRadius = new CornerRadius(0);
@@ -114,6 +143,10 @@ public sealed partial class LauncherWindow : Window
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         ViewModel.ItemsChanged += (_, _) => UpdateWindowRect(keepPosition: true);
         App.Current.SettingsChanged += OnSettingsChanged;
+        ContentRoot.SizeChanged += (_, _) => UpdateItemGridWidth();
+
+        // タブ欄のホイール操作はタブの横スクロールに使われるため、処理済みのイベントも受け取る
+        TabList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(TabList_PointerWheelChanged), true);
 
         // 非表示のまましばらく経過したらメモリを解放する
         _trimTimer = DispatcherQueue.CreateTimer();
@@ -258,31 +291,50 @@ public sealed partial class LauncherWindow : Window
 
     private void ApplyColumns()
     {
-        // 列数分の幅に固定し、アイテムが少ない場合も左詰めで表示する
+        _iconPixelSize = ViewModel.Layout.IconPixelSize;
+        if (ItemGrid.ItemsPanelRoot is null)
+        {
+            ItemGrid.Loaded += (_, _) => UpdateItemGridWidth();
+        }
+
+        UpdateItemGridWidth();
+    }
+
+    /// <summary>
+    /// アイテム一覧の列数・幅を設定する。
+    /// 自動サイズの場合は設定の列数、サイズを変更した場合はウィンドウの幅に収まる列数とし、
+    /// 列数分の幅に固定してアイテムが少ない場合も左詰めで表示する。
+    /// </summary>
+    private void UpdateItemGridWidth()
+    {
         var layout = ViewModel.Layout;
-        ItemGrid.Width = (layout.Columns * (layout.TileWidth + TileMargin)) + 2;
-        _iconPixelSize = layout.IconPixelSize;
+        var tileWidth = layout.TileWidth + TileMargin;
+        var columns = layout.Columns;
+        if (App.Current.Settings.HasLauncherSize && ContentRoot.ActualWidth > 0)
+        {
+            var available = ContentRoot.ActualWidth - ContentRoot.Padding.Left - ContentRoot.Padding.Right - 2;
+            columns = Math.Max(1, (int)Math.Floor(available / tileWidth));
+        }
+
+        ItemGrid.Width = (columns * tileWidth) + 2;
         if (ItemGrid.ItemsPanelRoot is ItemsWrapGrid panel)
         {
-            panel.MaximumRowsOrColumns = ViewModel.Layout.Columns;
-        }
-        else
-        {
-            ItemGrid.Loaded += (_, _) =>
-            {
-                if (ItemGrid.ItemsPanelRoot is ItemsWrapGrid loadedPanel)
-                {
-                    loadedPanel.MaximumRowsOrColumns = ViewModel.Layout.Columns;
-                }
-            };
+            panel.MaximumRowsOrColumns = columns;
         }
     }
 
     /// <summary>
-    /// 列数・アイテム数からウィンドウのサイズ (DIP) を計算する。
+    /// ウィンドウのサイズ (DIP) を取得する。サイズを変更している場合はその値、それ以外は列数・アイテム数から計算する。
     /// </summary>
     private (double Width, double Height) CalculateSize()
     {
+        var settings = App.Current.Settings;
+        var (minWidth, minHeight) = MinimumSize;
+        if (settings is { LauncherWidth: { } customWidth, LauncherHeight: { } customHeight })
+        {
+            return (Math.Max(minWidth, customWidth), Math.Max(minHeight, customHeight));
+        }
+
         var layout = ViewModel.Layout;
         var width = Math.Max(MinWidth, (layout.Columns * (layout.TileWidth + TileMargin)) + ChromeWidth);
         var rows = Math.Clamp((int)Math.Ceiling(ViewModel.MaxItemCount / (double)layout.Columns), MinRows, MaxRows);
@@ -290,8 +342,126 @@ public sealed partial class LauncherWindow : Window
         return (width, height);
     }
 
+    /// <summary>端のドラッグで変更できる最小サイズ (DIP、クライアント領域)</summary>
+    private (double Width, double Height) MinimumSize =>
+        (MinResizeWidth, ViewModel.Layout.TileHeight + TileMargin + ChromeHeight);
+
+    // ---- 端のドラッグによるサイズ変更 ------------------------------------------------------
+
+    private static unsafe LRESULT SubclassProc(HWND hwnd, uint message, WPARAM wParam, LPARAM lParam, nuint id, nuint data)
+    {
+        if (s_instance is { } window && window._hwnd == hwnd)
+        {
+            switch (message)
+            {
+                case PInvoke.WM_ENTERSIZEMOVE:
+                    window._sizeBeforeResize = window.AppWindow.Size;
+                    break;
+                case PInvoke.WM_EXITSIZEMOVE:
+                    window.OnResized();
+                    break;
+                case PInvoke.WM_GETMINMAXINFO:
+                    var result = PInvoke.DefSubclassProc(hwnd, message, wParam, lParam);
+                    window.SetMinimumTrackSize((MINMAXINFO*)lParam.Value);
+                    return result;
+            }
+        }
+
+        return PInvoke.DefSubclassProc(hwnd, message, wParam, lParam);
+    }
+
+    private unsafe void SetMinimumTrackSize(MINMAXINFO* info)
+    {
+        var scale = PInvoke.GetDpiForWindow(_hwnd) / 96.0;
+        var frame = WindowHelper.GetFrameSize(_hwnd);
+        var (minWidth, minHeight) = MinimumSize;
+        info->ptMinTrackSize.X = (int)Math.Ceiling(minWidth * scale) + frame.Width;
+        info->ptMinTrackSize.Y = (int)Math.Ceiling(minHeight * scale) + frame.Height;
+    }
+
+    private void OnResized()
+    {
+        if (!_isLauncherVisible || _modalDepth > 0 || AppWindow.Size == _sizeBeforeResize)
+        {
+            return;
+        }
+
+        // 変更後のサイズ (クライアント領域、DIP) と位置を保存する (左・上の端で変更した場合は位置も変わる)
+        var scale = PInvoke.GetDpiForWindow(_hwnd) / 96.0;
+        var frame = WindowHelper.GetFrameSize(_hwnd);
+        var width = (AppWindow.Size.Width - frame.Width) / scale;
+        var height = (AppWindow.Size.Height - frame.Height) / scale;
+        var (offsetX, offsetY) = WindowHelper.GetClientOffset(_hwnd);
+        var left = AppWindow.Position.X + offsetX;
+        var top = AppWindow.Position.Y + offsetY;
+        App.Current.UpdateSettings(s =>
+        {
+            (s.LauncherWidth, s.LauncherHeight) = (Math.Round(width), Math.Round(height));
+            (s.LastLeft, s.LastTop) = (left, top);
+        });
+    }
+
+    // ---- 画面上部のドラッグによる移動 ------------------------------------------------------
+
+    private void DragArea_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(DragArea).Properties.IsLeftButtonPressed || !DragArea.CapturePointer(e.Pointer))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _dragStartCursor = WindowHelper.GetCursorPosition();
+        _dragStartWindow = AppWindow.Position;
+        _isDraggingWindow = true;
+    }
+
+    private void DragArea_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isDraggingWindow)
+        {
+            return;
+        }
+
+        // 座標は物理ピクセルで扱う (拡大率の異なるモニタへ移動した場合もずれないようにする)
+        var cursor = WindowHelper.GetCursorPosition();
+        AppWindow.Move(new PointInt32(
+            _dragStartWindow.X + cursor.X - _dragStartCursor.X,
+            _dragStartWindow.Y + cursor.Y - _dragStartCursor.Y));
+        e.Handled = true;
+    }
+
+    private void DragArea_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        DragArea.ReleasePointerCapture(e.Pointer);
+        EndWindowDrag();
+    }
+
+    private void DragArea_PointerCaptureLost(object sender, PointerRoutedEventArgs e) => EndWindowDrag();
+
+    private void EndWindowDrag()
+    {
+        if (!_isDraggingWindow)
+        {
+            return;
+        }
+
+        _isDraggingWindow = false;
+        if (AppWindow.Position == _dragStartWindow)
+        {
+            return;
+        }
+
+        // 画面からはみ出した部分を戻し、移動した位置 (クライアント領域の左上) を保存する
+        UpdateWindowRect(keepPosition: true);
+        var (offsetX, offsetY) = WindowHelper.GetClientOffset(_hwnd);
+        var left = AppWindow.Position.X + offsetX;
+        var top = AppWindow.Position.Y + offsetY;
+        App.Current.UpdateSettings(s => (s.LastLeft, s.LastTop) = (left, top));
+    }
+
     /// <summary>
-    /// ウィンドウの位置・サイズを設定する。マウスカーソル付近 (または画面中央) に、画面内に収まるよう配置する。
+    /// ウィンドウの位置・サイズを設定する。マウスカーソル付近 (画面中央・前回の位置) に、画面内に収まるよう配置する。
     /// </summary>
     /// <param name="keepPosition">現在の位置を基準にサイズのみ変更する場合は true</param>
     private void UpdateWindowRect(bool keepPosition)
@@ -301,7 +471,13 @@ public sealed partial class LauncherWindow : Window
             return;
         }
 
-        var monitor = keepPosition ? WindowHelper.GetMonitorForWindow(_hwnd) : WindowHelper.GetMonitorAtCursor();
+        var settings = App.Current.Settings;
+        PointInt32? last = !keepPosition && settings.Position == LauncherPosition.Last && settings is { LastLeft: { } left, LastTop: { } top }
+            ? new PointInt32(left, top)
+            : null;
+        var monitor = keepPosition ? WindowHelper.GetMonitorForWindow(_hwnd)
+            : last is { } lastPoint ? WindowHelper.GetMonitorAt(lastPoint)
+            : WindowHelper.GetMonitorAtCursor();
         var (offsetX, offsetY) = WindowHelper.GetClientOffset(_hwnd);
         var current = new PointInt32(AppWindow.Position.X + offsetX, AppWindow.Position.Y + offsetY);
         if (!keepPosition)
@@ -321,7 +497,11 @@ public sealed partial class LauncherWindow : Window
         {
             (x, y) = (current.X, current.Y);
         }
-        else if (App.Current.Settings.Position == LauncherPosition.Center)
+        else if (last is { } point)
+        {
+            (x, y) = (point.X, point.Y);
+        }
+        else if (settings.Position == LauncherPosition.Center)
         {
             x = work.X + ((work.Width - width) / 2);
             y = work.Y + ((work.Height - height) / 2);
@@ -599,6 +779,10 @@ public sealed partial class LauncherWindow : Window
         var menu = new MenuFlyout();
         menu.Items.Add(CreateMenuItem("アイテムを追加", "", async () => await AddItemAsync()));
         menu.Items.Add(CreateMenuItem("タブを追加", "", async () => await AddTabAsync()));
+        var resetSize = CreateMenuItem("ウィンドウのサイズを自動に戻す", "\uE9A6", () => App.Current.UpdateSettings(s => s.ResetLauncherSize()));
+        resetSize.IsEnabled = App.Current.Settings.HasLauncherSize;
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(resetSize);
         return menu;
     }
 
@@ -867,6 +1051,34 @@ public sealed partial class LauncherWindow : Window
             {
                 deferral.Complete();
             }
+        }
+    }
+
+    /// <summary>
+    /// タブ欄の上でホイールを回した場合、タブを切り替える (上: 前のタブ、下: 次のタブ。端では止める)。
+    /// </summary>
+    private void TabList_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        var properties = e.GetCurrentPoint(TabList).Properties;
+        if (properties.IsHorizontalMouseWheel || ViewModel.Tabs.Count == 0)
+        {
+            return;
+        }
+
+        // タッチパッド等の細かい回転量は 1 ノッチ分 (120) たまってから切り替える
+        _tabWheelDelta += properties.MouseWheelDelta;
+        var steps = _tabWheelDelta / WheelDelta;
+        if (steps == 0)
+        {
+            return;
+        }
+
+        _tabWheelDelta -= steps * WheelDelta;
+        var index = Math.Clamp(ViewModel.SelectedTabIndex - steps, 0, ViewModel.Tabs.Count - 1);
+        if (index != ViewModel.SelectedTabIndex)
+        {
+            ViewModel.SelectedTabIndex = index;
+            TabList.ScrollIntoView(TabList.SelectedItem);
         }
     }
 

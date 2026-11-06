@@ -80,6 +80,26 @@ internal static unsafe class WindowHelper
     }
 
     /// <summary>
+    /// 指定した位置に最も近いモニタの情報を取得する (<see cref="MonitorArea.Cursor"/> には指定した位置を設定する)。
+    /// </summary>
+    /// <param name="point">位置 (物理ピクセル)</param>
+    public static MonitorArea GetMonitorAt(PointInt32 point)
+    {
+        var position = new System.Drawing.Point(point.X, point.Y);
+        var monitor = PInvoke.MonitorFromPoint(position, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+        return GetMonitorArea(monitor, position);
+    }
+
+    /// <summary>
+    /// マウスカーソルの位置 (物理ピクセル) を取得する。
+    /// </summary>
+    public static PointInt32 GetCursorPosition()
+    {
+        PInvoke.GetCursorPos(out var cursor);
+        return new PointInt32(cursor.X, cursor.Y);
+    }
+
+    /// <summary>
     /// ウィンドウがあるモニタの情報を取得する。
     /// </summary>
     /// <param name="hwnd">ウィンドウハンドル</param>

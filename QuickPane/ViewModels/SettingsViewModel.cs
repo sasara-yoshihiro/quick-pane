@@ -98,14 +98,23 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnThemeIndexChanged(int value) =>
         Update(s => s.Theme = (AppTheme)value);
 
+    // アイコンサイズ・列数を変更した場合は、ランチャーのサイズを自動に戻して変更後のレイアウトに合わせる
     partial void OnIconSizeIndexChanged(int value) =>
-        Update(s => s.IconSize = (IconSizeOption)value);
+        Update(s =>
+        {
+            s.IconSize = (IconSizeOption)value;
+            s.ResetLauncherSize();
+        });
 
     partial void OnColumnsChanged(double value)
     {
         if (!double.IsNaN(value))
         {
-            Update(s => s.Columns = (int)Math.Round(value));
+            Update(s =>
+            {
+                s.Columns = (int)Math.Round(value);
+                s.ResetLauncherSize();
+            });
         }
     }
 

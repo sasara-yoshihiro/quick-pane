@@ -17,12 +17,12 @@ public static class AutoStartManager
     private static string Command => $"\"{Environment.ProcessPath}\"";
 
     /// <summary>
-    /// 自動起動が登録されているかどうかを取得する。
+    /// この exe が自動起動に登録されているかどうかを取得する。
     /// </summary>
     public static bool IsEnabled()
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
-        return key?.GetValue(ValueName) is string;
+        return key?.GetValue(ValueName) is string current && string.Equals(current, Command, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -39,8 +39,9 @@ public static class AutoStartManager
             {
                 key.SetValue(ValueName, Command);
             }
-            else
+            else if (key.GetValue(ValueName) is string current && string.Equals(current, Command, StringComparison.OrdinalIgnoreCase))
             {
+                // 別の場所にある QuickPane の登録は削除しない
                 key.DeleteValue(ValueName, throwOnMissingValue: false);
             }
 
@@ -55,14 +56,17 @@ public static class AutoStartManager
     }
 
     /// <summary>
-    /// 自動起動が登録されている場合、登録内容を現在の exe のパスに更新する (フォルダを移動した場合の対策)。
+    /// 自動起動が登録されていて、登録先の exe が存在しない場合 (フォルダを移動した場合)、登録内容を現在の exe のパスに更新する。
+    /// 登録先の exe が存在する場合は、別の場所にある QuickPane の登録とみなして変更しない。
     /// </summary>
     public static void RefreshPath()
     {
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
-            if (key?.GetValue(ValueName) is string current && !string.Equals(current, Command, StringComparison.OrdinalIgnoreCase))
+            if (key?.GetValue(ValueName) is string current
+                && !string.Equals(current, Command, StringComparison.OrdinalIgnoreCase)
+                && !File.Exists(current.Trim().Trim('"')))
             {
                 key.SetValue(ValueName, Command);
                 Log.Info($"自動起動の登録パスを更新しました。{Command}");

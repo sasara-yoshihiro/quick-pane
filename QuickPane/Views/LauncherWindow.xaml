@@ -116,6 +116,18 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
+            <!-- 画面上部の空き部分 (ドラッグでランチャーを移動) -->
+            <Border
+                x:Name="DragArea"
+                Grid.Row="0"
+                Grid.RowSpan="2"
+                Margin="-10,-8,-10,0"
+                Background="Transparent"
+                PointerCaptureLost="DragArea_PointerCaptureLost"
+                PointerMoved="DragArea_PointerMoved"
+                PointerPressed="DragArea_PointerPressed"
+                PointerReleased="DragArea_PointerReleased" />
+
             <!-- ヘッダー: タブ・タブ追加・ピン留め・設定 -->
             <Grid Grid.Row="0" ColumnSpacing="4">
                 <Grid.ColumnDefinitions>
@@ -208,8 +220,14 @@
                 Margin="4,6,4,4"
                 Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
-            <!-- アイテム -->
-            <Grid Grid.Row="2">
+            <!-- アイテム (一覧の外側の空き部分も右クリックメニュー・ドロップの対象とする) -->
+            <Grid
+                Grid.Row="2"
+                AllowDrop="True"
+                Background="Transparent"
+                ContextRequested="ItemGrid_ContextRequested"
+                DragOver="ItemGrid_DragOver"
+                Drop="ItemGrid_Drop">
                 <GridView
                     x:Name="ItemGrid"
                     Padding="0,2,0,2"
@@ -218,11 +236,8 @@
                     Background="Transparent"
                     CanDragItems="True"
                     CanReorderItems="True"
-                    ContextRequested="ItemGrid_ContextRequested"
                     DragItemsCompleted="ItemGrid_DragItemsCompleted"
                     DragItemsStarting="ItemGrid_DragItemsStarting"
-                    DragOver="ItemGrid_DragOver"
-                    Drop="ItemGrid_Drop"
                     IsItemClickEnabled="True"
                     ItemClick="ItemGrid_ItemClick"
                     ItemContainerStyle="{StaticResource TileItemStyle}"

@@ -81,13 +81,14 @@
                             Message="{x:Bind ViewModel.HotkeyError, Mode=OneWay}"
                             Severity="Warning" />
 
-                        <toolkit:SettingsCard Description="ランチャーを表示する位置です。画面からはみ出す場合は画面内に収まるよう補正します。" Header="表示位置">
+                        <toolkit:SettingsCard Description="ランチャーを表示する位置です。「前回の位置」では、ランチャー上部をドラッグして移動した位置に表示します。" Header="表示位置">
                             <toolkit:SettingsCard.HeaderIcon>
                                 <FontIcon Glyph="&#xE7C4;" />
                             </toolkit:SettingsCard.HeaderIcon>
                             <ComboBox MinWidth="200" SelectedIndex="{x:Bind ViewModel.PositionIndex, Mode=TwoWay}">
                                 <ComboBoxItem Content="マウスカーソル付近" />
                                 <ComboBoxItem Content="画面中央" />
+                                <ComboBoxItem Content="前回の位置" />
                             </ComboBox>
                         </toolkit:SettingsCard>
 

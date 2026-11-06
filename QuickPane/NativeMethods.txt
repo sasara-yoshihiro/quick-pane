@@ -57,3 +57,7 @@ ClientToScreen
 GetClientRect
 SetProcessWorkingSetSize
 GetCurrentProcess
+WM_ENTERSIZEMOVE
+WM_EXITSIZEMOVE
+WM_GETMINMAXINFO
+MINMAXINFO
