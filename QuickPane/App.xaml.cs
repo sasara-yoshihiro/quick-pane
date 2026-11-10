@@ -70,6 +70,12 @@ public partial class App : Application
     /// <summary>表示中の設定画面 (表示していない場合は null)</summary>
     internal SettingsWindow? OpenedSettingsWindow => _settingsWindow;
 
+    /// <summary>管理者として実行しているかどうか</summary>
+    internal static bool IsElevated { get; } = Environment.IsPrivilegedProcess;
+
+    /// <summary>表示名 (管理者として実行している場合はその旨を付ける)</summary>
+    internal static string DisplayName => IsElevated ? "QuickPane (管理者)" : "QuickPane";
+
     /// <summary>アプリのバージョン</summary>
     internal static string Version =>
         Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
@@ -89,7 +95,7 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        Log.Info($"起動しました。バージョン={Version}");
+        Log.Info($"起動しました。バージョン={Version} 管理者={IsElevated}");
 
         var settingsResult = DataStore.LoadSettings();
         var itemsResult = DataStore.LoadItems();
@@ -119,6 +125,7 @@ public partial class App : Application
         var launcherViewModel = new LauncherViewModel(itemsResult.Value, Icons, Layout);
         _launcherWindow = new LauncherWindow(launcherViewModel);
         _launcherWindow.Prepare();
+        launcherViewModel.PruneIconCache();
 
         _hotkeyService = new HotkeyService(_messageWindow);
         _hotkeyService.Pressed += (_, _) => _launcherWindow.Toggle();
@@ -127,7 +134,8 @@ public partial class App : Application
         NotifyLoadResult(settingsResult.Status, "設定", settingsResult.CorruptFilePath);
         NotifyLoadResult(itemsResult.Status, "登録アイテム", itemsResult.CorruptFilePath);
 
-        AutoStartManager.RefreshPath();
+        // schtasks の実行に時間がかかる場合があるため、バックグラウンドで行う
+        _ = Task.Run(AutoStartManager.RefreshPath);
     }
 
     /// <summary>

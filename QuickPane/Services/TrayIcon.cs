@@ -72,7 +72,7 @@ internal sealed unsafe partial class TrayIcon : IDisposable
         data.uFlags = NOTIFY_ICON_DATA_FLAGS.NIF_MESSAGE | NOTIFY_ICON_DATA_FLAGS.NIF_ICON | NOTIFY_ICON_DATA_FLAGS.NIF_TIP | NOTIFY_ICON_DATA_FLAGS.NIF_SHOWTIP;
         data.uCallbackMessage = MessageWindow.TrayCallbackMessage;
         data.hIcon = _icon;
-        SetText(data.szTip.AsSpan(), "QuickPane");
+        SetText(data.szTip.AsSpan(), App.DisplayName);
         _added = PInvoke.Shell_NotifyIcon(NOTIFY_ICON_MESSAGE.NIM_ADD, data);
         if (!_added)
         {

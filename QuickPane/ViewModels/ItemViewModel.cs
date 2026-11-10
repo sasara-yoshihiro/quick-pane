@@ -35,6 +35,9 @@ public sealed partial class ItemViewModel : ObservableObject
     /// <summary>表示名</summary>
     public string Name => Model.Name;
 
+    /// <summary>管理者として実行するかどうか (盾のバッジを表示する)</summary>
+    public bool RunAsAdmin => Model.RunAsAdmin;
+
     /// <summary>ツールチップ</summary>
     public string ToolTip => string.IsNullOrEmpty(Model.Arguments)
         ? $"{Model.Name}\n{Model.Path}"
@@ -70,6 +73,7 @@ public sealed partial class ItemViewModel : ObservableObject
         Icon = null;
         OnPropertyChanged(nameof(Name));
         OnPropertyChanged(nameof(ToolTip));
+        OnPropertyChanged(nameof(RunAsAdmin));
         OnPropertyChanged(nameof(DefaultGlyph));
     }
 
@@ -96,18 +100,32 @@ public sealed partial class ItemViewModel : ObservableObject
     /// <param name="path">アイテムのパス</param>
     /// <param name="iconPath">アイコンの場所</param>
     /// <param name="size">サイズ (ピクセル)</param>
+    /// <param name="useCache">
+    /// 取得したアイコンをキャッシュに保存するかどうか
+    /// (一時的に表示するアイコンは、キャッシュが増え続けないよう保存せずメモリ上でのみ扱う)
+    /// </param>
     /// <returns>読み込めなかった場合は null</returns>
-    public static async Task<ImageSource?> LoadImageAsync(IconService service, string path, string iconPath, int size)
+    public static async Task<ImageSource?> LoadImageAsync(IconService service, string path, string iconPath, int size, bool useCache = true)
     {
-        var file = await service.GetIconFileAsync(path, iconPath, size);
-        if (file is null)
-        {
-            return null;
-        }
-
+        string? file = null;
         try
         {
-            var bytes = await Task.Run(() => File.ReadAllBytes(file)).WaitAsync(TimeSpan.FromSeconds(5));
+            byte[]? bytes;
+            if (useCache)
+            {
+                file = await service.GetIconFileAsync(path, iconPath, size);
+                bytes = file is null ? null : await Task.Run(() => File.ReadAllBytes(file)).WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            else
+            {
+                bytes = await service.GetIconBytesAsync(path, iconPath, size);
+            }
+
+            if (bytes is null)
+            {
+                return null;
+            }
+
             using var stream = new InMemoryRandomAccessStream();
             await stream.WriteAsync(bytes.AsBuffer());
             stream.Seek(0);
@@ -118,7 +136,7 @@ public sealed partial class ItemViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            App.Log.Warn($"アイコン画像を読み込めませんでした。{file}", ex);
+            App.Log.Warn($"アイコン画像を読み込めませんでした。{file ?? path}", ex);
             return null;
         }
     }

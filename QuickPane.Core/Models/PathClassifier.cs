@@ -43,7 +43,12 @@ public static partial class PathClassifier
         var trimmed = path.Trim().TrimEnd('\\', '/');
         if (IsUrl(trimmed))
         {
-            // shell:startup 等はフォルダとして扱う
+            // アプリ一覧のアプリ (shell:AppsFolder\...) はアプリ、shell:startup 等はフォルダとして扱う
+            if (trimmed.StartsWith(@"shell:AppsFolder\", StringComparison.OrdinalIgnoreCase))
+            {
+                return ItemKind.App;
+            }
+
             return trimmed.StartsWith("shell:", StringComparison.OrdinalIgnoreCase) ? ItemKind.Folder : ItemKind.Url;
         }
 

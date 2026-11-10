@@ -5,6 +5,28 @@ namespace QuickPane.Core.Launching;
 /// </summary>
 public static class LaunchErrorMessages
 {
+    /// <summary>UAC の確認ダイアログでキャンセルされた場合のエラーコード</summary>
+    public const int ErrorCancelled = 1223;
+
+    /// <summary>
+    /// HRESULT からメッセージを作成する。
+    /// </summary>
+    /// <param name="hresult">HRESULT</param>
+    public static string FromHResult(int hresult)
+    {
+        // Win32 エラーコードを HRESULT にしたもの (0x8007xxxx) は Win32 エラーコードとして扱う
+        if ((uint)hresult >> 16 == 0x8007)
+        {
+            var code = hresult & 0xFFFF;
+            return FromWin32(code, false, new System.ComponentModel.Win32Exception(code).Message);
+        }
+
+        var message = System.Runtime.InteropServices.Marshal.GetExceptionForHR(hresult)?.Message;
+        return string.IsNullOrWhiteSpace(message)
+            ? $"起動できませんでした。(エラーコード: 0x{hresult:X8})"
+            : $"{message} (エラーコード: 0x{hresult:X8})";
+    }
+
     /// <summary>
     /// Win32 エラーコードからメッセージを作成する。
     /// </summary>
@@ -43,6 +65,7 @@ public static class LaunchErrorMessages
         DirectoryNotFoundException => FromWin32(3, false, ex.Message),
         UnauthorizedAccessException => FromWin32(5, false, ex.Message),
         InvalidOperationException => "パスが指定されていません。",
+        System.Runtime.InteropServices.COMException => FromHResult(ex.HResult),
         _ => ex.Message,
     };
 }

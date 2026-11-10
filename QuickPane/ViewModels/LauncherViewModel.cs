@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using QuickPane.Core.Icons;
 using QuickPane.Core.Launching;
@@ -14,6 +15,12 @@ namespace QuickPane.ViewModels;
 public sealed partial class LauncherViewModel : ObservableObject
 {
     private readonly IconService _iconService;
+
+    /// <summary>起動処理中のアイテム (同じアイテムの二重起動を防ぐ)</summary>
+    private readonly HashSet<ItemViewModel> _launching = [];
+
+    /// <summary>起動・場所を開く処理の実行中の件数</summary>
+    private int _busyCount;
 
     /// <summary>
     /// コンストラクタ。
@@ -42,8 +49,30 @@ public sealed partial class LauncherViewModel : ObservableObject
 
     /// <summary>選択中のタブのインデックス</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SelectedTab))]
+    [NotifyPropertyChangedFor(nameof(SelectedTab), nameof(DisplayedItems))]
     public partial int SelectedTabIndex { get; set; }
+
+    /// <summary>検索欄を表示しているかどうか</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSearchActive), nameof(DisplayedItems), nameof(IsSearchNoResult))]
+    public partial bool IsSearchOpen { get; set; }
+
+    /// <summary>検索文字列</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSearchActive), nameof(DisplayedItems), nameof(IsSearchNoResult))]
+    public partial string SearchText { get; set; } = string.Empty;
+
+    /// <summary>検索中 (検索欄に文字を入力している) かどうか。検索中は全タブの検索結果を表示する</summary>
+    public bool IsSearchActive => IsSearchOpen && !string.IsNullOrWhiteSpace(SearchText);
+
+    /// <summary>検索結果 (全タブのアイテムのうち、名前が検索文字列を含むもの)</summary>
+    public ObservableCollection<ItemViewModel> SearchResults { get; } = [];
+
+    /// <summary>検索結果が 0 件かどうか</summary>
+    public bool IsSearchNoResult => IsSearchActive && SearchResults.Count == 0;
+
+    /// <summary>表示するアイテム (検索中は検索結果、それ以外は選択中のタブのアイテム)</summary>
+    public ObservableCollection<ItemViewModel>? DisplayedItems => IsSearchActive ? SearchResults : SelectedTab?.Items;
 
     /// <summary>選択中のタブ</summary>
     public TabViewModel? SelectedTab => SelectedTabIndex >= 0 && SelectedTabIndex < Tabs.Count ? Tabs[SelectedTabIndex] : null;
@@ -70,6 +99,41 @@ public sealed partial class LauncherViewModel : ObservableObject
 
     /// <summary>アイテム数が最も多いタブのアイテム数</summary>
     public int MaxItemCount => Tabs.Count == 0 ? 0 : Tabs.Max(t => t.Items.Count);
+
+    /// <summary>
+    /// 検索を終了し、選択中のタブの表示に戻す。
+    /// </summary>
+    public void CloseSearch()
+    {
+        SearchText = string.Empty;
+        IsSearchOpen = false;
+    }
+
+    partial void OnSearchTextChanged(string value) => UpdateSearchResults();
+
+    /// <summary>
+    /// 検索結果を更新する。大文字・小文字、全角・半角、ひらがな・カタカナを区別せずに名前で検索する。
+    /// </summary>
+    private void UpdateSearchResults()
+    {
+        var keyword = SearchText.Trim();
+        var compare = CultureInfo.CurrentCulture.CompareInfo;
+        const CompareOptions options = CompareOptions.IgnoreCase | CompareOptions.IgnoreWidth | CompareOptions.IgnoreKanaType;
+        var matches = keyword.Length == 0
+            ? new List<ItemViewModel>()
+            : Tabs.SelectMany(t => t.Items).Where(i => compare.IndexOf(i.Name, keyword, options) >= 0).ToList();
+
+        if (!matches.SequenceEqual(SearchResults))
+        {
+            SearchResults.Clear();
+            foreach (var item in matches)
+            {
+                SearchResults.Add(item);
+            }
+        }
+
+        OnPropertyChanged(nameof(IsSearchNoResult));
+    }
 
     /// <summary>
     /// タブを切り替える。
@@ -232,17 +296,25 @@ public sealed partial class LauncherViewModel : ObservableObject
     /// </summary>
     /// <param name="item">アイテム</param>
     /// <param name="runAsAdmin">管理者として実行するかどうか (null の場合はアイテムの設定に従う)</param>
+    /// <returns>起動結果 (同じアイテムを起動中の場合は何もせず、キャンセル扱いの結果を返す)</returns>
     public async Task<LaunchResult> LaunchAsync(ItemViewModel item, bool? runAsAdmin = null)
     {
+        // Enter の連打等で同じアイテムが二重に起動されないよう、起動中のアイテムは起動しない
+        if (!_launching.Add(item))
+        {
+            return LaunchResult.CancelledByUser;
+        }
+
         IsErrorOpen = false;
-        IsBusy = true;
+        BeginBusy();
         try
         {
             return await ItemLauncher.LaunchAsync(item.Model, runAsAdmin);
         }
         finally
         {
-            IsBusy = false;
+            _launching.Remove(item);
+            EndBusy();
         }
     }
 
@@ -250,11 +322,24 @@ public sealed partial class LauncherViewModel : ObservableObject
     /// アイテムの場所をエクスプローラで開く。
     /// </summary>
     /// <param name="item">アイテム</param>
-    public Task<LaunchResult> OpenLocationAsync(ItemViewModel item)
+    public async Task<LaunchResult> OpenLocationAsync(ItemViewModel item)
     {
         IsErrorOpen = false;
-        return ItemLauncher.OpenLocationAsync(item.Model);
+        BeginBusy();
+        try
+        {
+            return await ItemLauncher.OpenLocationAsync(item.Model);
+        }
+        finally
+        {
+            EndBusy();
+        }
     }
+
+    // 複数の起動を並行して行う場合も、すべて終わるまで処理中の表示を続ける
+    private void BeginBusy() => IsBusy = ++_busyCount > 0;
+
+    private void EndBusy() => IsBusy = --_busyCount > 0;
 
     /// <summary>
     /// エラー通知を表示する。
@@ -266,6 +351,16 @@ public sealed partial class LauncherViewModel : ObservableObject
         ErrorTitle = title;
         ErrorMessage = message;
         IsErrorOpen = true;
+    }
+
+    /// <summary>
+    /// 登録アイテムで使用していないアイコンキャッシュを削除する。
+    /// </summary>
+    public void PruneIconCache()
+    {
+        var items = Tabs.SelectMany(t => t.Items).Select(i => (i.Model.Path, i.Model.IconPath)).ToList();
+        var size = Layout.IconPixelSize;
+        _ = Task.Run(() => _iconService.PruneCache(items, size));
     }
 
     /// <summary>
@@ -294,6 +389,12 @@ public sealed partial class LauncherViewModel : ObservableObject
             }).ToList(),
         };
         DataStore.SaveItems(data);
+        if (IsSearchActive)
+        {
+            // 検索中にアイテムを編集・削除した場合は検索結果に反映する
+            UpdateSearchResults();
+        }
+
         ItemsChanged?.Invoke(this, EventArgs.Empty);
     }
 

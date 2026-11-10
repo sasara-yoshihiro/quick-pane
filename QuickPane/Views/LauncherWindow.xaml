@@ -7,7 +7,7 @@
     xmlns:vm="using:QuickPane.ViewModels"
     Title="QuickPane">
 
-    <Grid x:Name="RootGrid" PreviewKeyDown="RootGrid_PreviewKeyDown">
+    <Grid x:Name="RootGrid" CharacterReceived="RootGrid_CharacterReceived" PreviewKeyDown="RootGrid_PreviewKeyDown">
         <Grid.Resources>
             <!-- タブ (ピル型) -->
             <Style x:Key="TabItemStyle" TargetType="ListViewItem">
@@ -135,9 +135,25 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
+                <!-- 全タブ検索 (文字を入力すると表示) -->
+                <TextBox
+                    x:Name="SearchBox"
+                    Height="32"
+                    VerticalAlignment="Center"
+                    CornerRadius="8"
+                    PlaceholderText="全タブから名前で検索 (Esc で戻る)"
+                    PreviewKeyDown="SearchBox_PreviewKeyDown"
+                    Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    Visibility="{x:Bind helpers:Bind.VisibleIf(ViewModel.IsSearchOpen), Mode=OneWay}">
+                    <TextBox.Resources>
+                        <Thickness x:Key="TextControlBorderThemeThickness">1</Thickness>
+                    </TextBox.Resources>
+                </TextBox>
+
                 <ListView
                     x:Name="TabList"
                     Height="34"
+                    Visibility="{x:Bind helpers:Bind.CollapsedIf(ViewModel.IsSearchOpen), Mode=OneWay}"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Center"
                     AllowDrop="True"
@@ -194,6 +210,12 @@
                     VerticalAlignment="Center"
                     Orientation="Horizontal"
                     Spacing="2">
+                    <Button
+                        Click="SearchButton_Click"
+                        Style="{StaticResource HeaderButtonStyle}"
+                        ToolTipService.ToolTip="全タブから検索 (Ctrl + F。文字を入力しても検索できます)">
+                        <FontIcon FontSize="13" Glyph="&#xE721;" />
+                    </Button>
                     <ToggleButton
                         Width="32"
                         Height="30"
@@ -234,14 +256,14 @@
                     HorizontalAlignment="Center"
                     AllowDrop="True"
                     Background="Transparent"
-                    CanDragItems="True"
-                    CanReorderItems="True"
+                    CanDragItems="{x:Bind helpers:Bind.Not(ViewModel.IsSearchActive), Mode=OneWay}"
+                    CanReorderItems="{x:Bind helpers:Bind.Not(ViewModel.IsSearchActive), Mode=OneWay}"
                     DragItemsCompleted="ItemGrid_DragItemsCompleted"
                     DragItemsStarting="ItemGrid_DragItemsStarting"
                     IsItemClickEnabled="True"
                     ItemClick="ItemGrid_ItemClick"
                     ItemContainerStyle="{StaticResource TileItemStyle}"
-                    ItemsSource="{x:Bind ViewModel.SelectedTab.Items, Mode=OneWay}"
+                    ItemsSource="{x:Bind ViewModel.DisplayedItems, Mode=OneWay}"
                     PreviewKeyDown="ItemGrid_PreviewKeyDown"
                     SelectionMode="Single">
                     <GridView.ItemContainerTransitions>
@@ -295,6 +317,25 @@
                                             Glyph="{x:Bind DefaultGlyph, Mode=OneWay}"
                                             Visibility="{x:Bind helpers:Bind.VisibleIfNull(Icon), Mode=OneWay}" />
                                         <Image Source="{x:Bind Icon, Mode=OneWay}" Stretch="Uniform" />
+
+                                        <!-- 管理者として実行するアイテムの目印 (盾のバッジ) -->
+                                        <Border
+                                            Width="16"
+                                            Height="16"
+                                            Margin="0,0,-5,-3"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Bottom"
+                                            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            ToolTipService.ToolTip="管理者として実行"
+                                            Visibility="{x:Bind helpers:Bind.VisibleIf(RunAsAdmin), Mode=OneWay}">
+                                            <FontIcon
+                                                FontSize="9"
+                                                Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                Glyph="&#xEA18;" />
+                                        </Border>
                                     </Grid>
                                     <TextBlock
                                         HorizontalAlignment="Center"
@@ -317,17 +358,27 @@
                     VerticalAlignment="Center"
                     IsHitTestVisible="False"
                     Spacing="10"
-                    Visibility="{x:Bind helpers:Bind.VisibleIf(ViewModel.SelectedTab.IsEmpty), Mode=OneWay}">
+                    Visibility="{x:Bind helpers:Bind.VisibleIfAndNot(ViewModel.SelectedTab.IsEmpty, ViewModel.IsSearchActive), Mode=OneWay}">
                     <FontIcon
                         FontSize="28"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                         Glyph="&#xE896;" />
                     <TextBlock
+                        x:Name="EmptyHint"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Text="ファイルやフォルダをドラッグ＆ドロップして登録"
                         TextAlignment="Center"
                         TextWrapping="Wrap" />
                 </StackPanel>
+
+                <!-- 検索結果が 0 件の場合の案内 -->
+                <TextBlock
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    IsHitTestVisible="False"
+                    Text="一致するアイテムはありません"
+                    Visibility="{x:Bind helpers:Bind.VisibleIf(ViewModel.IsSearchNoResult), Mode=OneWay}" />
 
                 <ProgressBar
                     VerticalAlignment="Top"

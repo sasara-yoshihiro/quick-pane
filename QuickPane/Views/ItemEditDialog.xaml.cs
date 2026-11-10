@@ -51,7 +51,7 @@ public sealed partial class ItemEditDialog : ContentDialog
             return;
         }
 
-        var icon = await ItemViewModel.LoadImageAsync(App.Current.Icons, ViewModel.Path, ViewModel.IconPath, 72);
+        var icon = await ItemViewModel.LoadImageAsync(App.Current.Icons, ViewModel.Path, ViewModel.IconPath, 72, useCache: false);
         if (request == Preview.Request)
         {
             Preview.Icon = icon;

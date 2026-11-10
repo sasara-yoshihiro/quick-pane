@@ -9,7 +9,10 @@ namespace QuickPane.ViewModels;
 /// </summary>
 public sealed partial class SettingsViewModel : ObservableObject
 {
-    private readonly bool _initialized;
+    private bool _initialized;
+
+    /// <summary>自動起動の状態をプログラムから設定中 (変更処理を行わない)</summary>
+    private bool _settingAutoStart;
 
     /// <summary>
     /// コンストラクタ。
@@ -24,9 +27,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         IconSizeIndex = (int)settings.IconSize;
         Columns = settings.Columns;
         CloseAfterLaunch = settings.CloseAfterLaunch;
-        AutoStart = AutoStartManager.IsEnabled();
         HotkeyError = App.Current.Hotkey.IsRegistered ? string.Empty : "このホットキーは他のアプリで使用されているため登録できませんでした。別の組み合わせを設定してください。";
         _initialized = true;
+
+        // 自動起動の状態の取得 (schtasks の実行) は時間がかかる場合があるため、バックグラウンドで行う
+        _ = RunAutoStartTaskAsync(() => true);
     }
 
     /// <summary>ホットキー</summary>
@@ -59,7 +64,35 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     /// <summary>Windows サインイン時に自動起動</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanChangeAutoStartElevated))]
     public partial bool AutoStart { get; set; }
+
+    /// <summary>自動起動の状態の取得・変更中かどうか (変更中はスイッチを無効にする)</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanChangeAutoStart), nameof(CanChangeAutoStartElevated))]
+    public partial bool IsAutoStartBusy { get; set; } = true;
+
+    /// <summary>管理者として自動起動</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanChangeAutoStart))]
+    public partial bool AutoStartElevated { get; set; }
+
+    /// <summary>
+    /// 自動起動を変更できるかどうか。
+    /// 管理者としての自動起動 (タスク スケジューラ) の解除には管理者権限が必要なため、管理者として実行していない場合は変更できない。
+    /// </summary>
+    public bool CanChangeAutoStart => !IsAutoStartBusy && (App.IsElevated || !AutoStartElevated);
+
+    /// <summary>管理者として自動起動を変更できるかどうか (登録・解除には管理者権限が必要)</summary>
+    public bool CanChangeAutoStartElevated => !IsAutoStartBusy && App.IsElevated && AutoStart;
+
+    /// <summary>管理者として自動起動の説明</summary>
+    public string AutoStartElevatedDescription => App.IsElevated
+        ? "サインイン時に QuickPane を管理者として起動します (タスク スケジューラに登録します)。"
+        : "サインイン時に QuickPane を管理者として起動します。変更するには、QuickPane を管理者として実行してください。";
+
+    /// <summary>設定画面のタイトル</summary>
+    public string WindowTitle => App.IsElevated ? "QuickPane 設定 (管理者として実行中)" : "QuickPane 設定";
 
     /// <summary>列数の最小値</summary>
     public double MinColumns => UserSettings.MinColumns;
@@ -68,7 +101,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public double MaxColumns => UserSettings.MaxColumns;
 
     /// <summary>バージョン</summary>
-    public string Version => $"バージョン {App.Version}";
+    public string Version => App.IsElevated ? $"バージョン {App.Version} (管理者として実行中)" : $"バージョン {App.Version}";
 
     /// <summary>データフォルダ</summary>
     public string DataDirectory => AppPaths.DataDirectory;
@@ -123,9 +156,49 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     partial void OnAutoStartChanged(bool value)
     {
-        if (_initialized && !AutoStartManager.SetEnabled(value))
+        if (!_settingAutoStart)
         {
-            AutoStart = AutoStartManager.IsEnabled();
+            var elevated = value && AutoStartElevated;
+            _ = RunAutoStartTaskAsync(() => AutoStartManager.SetEnabled(value, elevated));
+        }
+    }
+
+    partial void OnAutoStartElevatedChanged(bool value)
+    {
+        if (!_settingAutoStart && AutoStart)
+        {
+            _ = RunAutoStartTaskAsync(() => AutoStartManager.SetEnabled(true, value));
+        }
+    }
+
+    /// <summary>
+    /// 自動起動の登録・解除をバックグラウンドで行い、登録状態を画面に反映する。
+    /// </summary>
+    /// <param name="change">登録・解除処理</param>
+    private async Task RunAutoStartTaskAsync(Func<bool> change)
+    {
+        IsAutoStartBusy = true;
+        try
+        {
+            // 変更後の登録状態を照会して画面に反映する (照会は 1 回にまとめる)
+            var status = await Task.Run(() =>
+            {
+                change();
+                return AutoStartManager.GetStatus();
+            });
+
+            _settingAutoStart = true;
+            AutoStart = status.Enabled;
+            AutoStartElevated = status.Elevated;
+        }
+        catch (Exception ex)
+        {
+            App.Log.Error("自動起動の状態を取得できませんでした。", ex);
+        }
+        finally
+        {
+            _settingAutoStart = false;
+            IsAutoStartBusy = false;
         }
     }
 

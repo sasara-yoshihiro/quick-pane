@@ -145,6 +145,12 @@ public sealed partial class LauncherWindow : Window
         App.Current.SettingsChanged += OnSettingsChanged;
         ContentRoot.SizeChanged += (_, _) => UpdateItemGridWidth();
 
+        // 管理者として実行している場合、通常の権限のエクスプローラからはドラッグ＆ドロップできない (Windows の制限)
+        if (App.IsElevated)
+        {
+            EmptyHint.Text = "管理者として実行中のため、エクスプローラからのドラッグ＆ドロップでは登録できません。\n右クリックメニューの「アイテムを追加」「アプリ一覧から追加」で登録してください。";
+        }
+
         // タブ欄のホイール操作はタブの横スクロールに使われるため、処理済みのイベントも受け取る
         TabList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(TabList_PointerWheelChanged), true);
 
@@ -233,6 +239,7 @@ public sealed partial class LauncherWindow : Window
 
         _isLauncherVisible = false;
         var version = ++_visibilityVersion;
+        ViewModel.CloseSearch();
         AnimateOut();
         await Task.Delay(90);
 
@@ -591,15 +598,147 @@ public sealed partial class LauncherWindow : Window
 
         switch (e.Key)
         {
+            case VirtualKey.Escape when ViewModel.IsSearchOpen:
+                // 検索中は検索を終了してタブの表示に戻す (もう一度 Esc でランチャーを閉じる)
+                CloseSearch();
+                e.Handled = true;
+                break;
             case VirtualKey.Escape:
                 HideLauncher();
                 e.Handled = true;
                 break;
             case VirtualKey.Tab when IsKeyDown(VirtualKey.Control):
+                CloseSearch();
                 ViewModel.SelectNextTab(IsKeyDown(VirtualKey.Shift) ? -1 : 1);
                 e.Handled = true;
                 break;
+            case VirtualKey.F when IsKeyDown(VirtualKey.Control):
+                OpenSearch(null);
+                e.Handled = true;
+                break;
+            default:
+                if (!IsTextInputFocused() && GetNumberKey(e.Key) is { } number && TryLaunchByNumber(number))
+                {
+                    e.Handled = true;
+                }
+
+                break;
         }
+    }
+
+    /// <summary>
+    /// 文字を入力した場合は検索を開始する (数字キーはアイテムの起動に使うため除く)。
+    /// </summary>
+    private void RootGrid_CharacterReceived(UIElement sender, CharacterReceivedRoutedEventArgs args)
+    {
+        if (_modalDepth > 0 || ViewModel.IsSearchOpen || IsTextInputFocused()
+            || char.IsControl(args.Character) || char.IsWhiteSpace(args.Character) || char.IsDigit(args.Character)
+            || IsKeyDown(VirtualKey.Control) || IsKeyDown(VirtualKey.Menu))
+        {
+            return;
+        }
+
+        args.Handled = true;
+        OpenSearch(args.Character.ToString());
+    }
+
+    private void SearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.IsSearchOpen)
+        {
+            CloseSearch();
+        }
+        else
+        {
+            OpenSearch(null);
+        }
+    }
+
+    private void SearchBox_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case VirtualKey.Enter:
+                // 選択中 (未選択の場合は先頭) の検索結果を起動する
+                if ((ItemGrid.SelectedItem ?? ViewModel.SearchResults.FirstOrDefault()) is ItemViewModel item && ViewModel.IsSearchActive)
+                {
+                    _ = LaunchAsync(item, GetRunAsAdminModifier());
+                }
+
+                e.Handled = true;
+                break;
+            case VirtualKey.Down:
+                // 検索結果に移動する (矢印キーで選択できる)
+                if (ItemGrid.Items.Count > 0)
+                {
+                    FocusItems();
+                    e.Handled = true;
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 検索を開始する。
+    /// </summary>
+    /// <param name="text">検索欄に入力する文字 (入力しない場合は null)</param>
+    private void OpenSearch(string? text)
+    {
+        if (text is not null)
+        {
+            ViewModel.SearchText = ViewModel.IsSearchOpen ? ViewModel.SearchText + text : text;
+        }
+
+        ViewModel.IsSearchOpen = true;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            SearchBox.Focus(FocusState.Programmatic);
+            SearchBox.SelectionStart = SearchBox.Text.Length;
+        });
+    }
+
+    private void CloseSearch()
+    {
+        if (!ViewModel.IsSearchOpen)
+        {
+            return;
+        }
+
+        ViewModel.CloseSearch();
+        FocusItems();
+    }
+
+    private bool IsTextInputFocused() =>
+        FocusManager.GetFocusedElement(RootGrid.XamlRoot) is TextBox or PasswordBox or AutoSuggestBox;
+
+    /// <summary>
+    /// 数字キー (1 ～ 9、テンキーを含む) の番号を取得する。
+    /// </summary>
+    private static int? GetNumberKey(VirtualKey key) => key switch
+    {
+        >= VirtualKey.Number1 and <= VirtualKey.Number9 => key - VirtualKey.Number0,
+        >= VirtualKey.NumberPad1 and <= VirtualKey.NumberPad9 => key - VirtualKey.NumberPad0,
+        _ => null,
+    };
+
+    /// <summary>
+    /// 表示中のタブ (検索中は検索結果) の N 番目のアイテムを起動する。Ctrl + Shift を押している場合は管理者として実行する。
+    /// </summary>
+    /// <returns>起動した場合は true</returns>
+    private bool TryLaunchByNumber(int number)
+    {
+        var control = IsKeyDown(VirtualKey.Control);
+        var shift = IsKeyDown(VirtualKey.Shift);
+        if ((control != shift) || IsKeyDown(VirtualKey.Menu) || ViewModel.DisplayedItems is not { } items || number > items.Count)
+        {
+            return false;
+        }
+
+        var item = items[number - 1];
+        ItemGrid.SelectedItem = item;
+        _ = LaunchAsync(item, GetRunAsAdminModifier());
+        return true;
     }
 
     private void ItemGrid_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
@@ -607,7 +746,12 @@ public sealed partial class LauncherWindow : Window
         if (e.Key == VirtualKey.Enter && ItemGrid.SelectedItem is ItemViewModel item)
         {
             e.Handled = true;
-            _ = LaunchAsync(item);
+            _ = LaunchAsync(item, GetRunAsAdminModifier());
+        }
+        else if (e.Key == VirtualKey.Delete && ItemGrid.SelectedItem is ItemViewModel selected)
+        {
+            e.Handled = true;
+            _ = DeleteItemAsync(selected);
         }
     }
 
@@ -615,9 +759,16 @@ public sealed partial class LauncherWindow : Window
     {
         if (e.ClickedItem is ItemViewModel item)
         {
-            _ = LaunchAsync(item);
+            _ = LaunchAsync(item, GetRunAsAdminModifier());
         }
     }
+
+    /// <summary>
+    /// Ctrl + Shift を押しながら起動した場合は管理者として実行する (エクスプローラと同じ操作)。
+    /// </summary>
+    /// <returns>管理者として実行する場合は true、それ以外はアイテムの設定に従う (null)</returns>
+    private static bool? GetRunAsAdminModifier() =>
+        IsKeyDown(VirtualKey.Control) && IsKeyDown(VirtualKey.Shift) ? true : null;
 
     private async Task LaunchAsync(ItemViewModel item, bool? runAsAdmin = null)
     {
@@ -770,7 +921,7 @@ public sealed partial class LauncherWindow : Window
         menu.Items.Add(move);
 
         menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(CreateMenuItem("削除", "", () => ViewModel.DeleteItem(item)));
+        menu.Items.Add(CreateMenuItem("削除", "", async () => await DeleteItemAsync(item)));
         return menu;
     }
 
@@ -778,6 +929,7 @@ public sealed partial class LauncherWindow : Window
     {
         var menu = new MenuFlyout();
         menu.Items.Add(CreateMenuItem("アイテムを追加", "", async () => await AddItemAsync()));
+        menu.Items.Add(CreateMenuItem("アプリ一覧から追加", "", async () => await AddInstalledAppsAsync()));
         menu.Items.Add(CreateMenuItem("タブを追加", "", async () => await AddTabAsync()));
         var resetSize = CreateMenuItem("ウィンドウのサイズを自動に戻す", "\uE9A6", () => App.Current.UpdateSettings(s => s.ResetLauncherSize()));
         resetSize.IsEnabled = App.Current.Settings.HasLauncherSize;
@@ -843,7 +995,38 @@ public sealed partial class LauncherWindow : Window
         }
     }
 
-    private async Task<bool> ShowItemEditDialogAsync(ItemEditViewModel editor)
+    private async Task AddInstalledAppsAsync()
+    {
+        var tab = ViewModel.SelectedTab;
+        if (tab is null)
+        {
+            return;
+        }
+
+        var dialog = new AppPickerDialog();
+        if (await ShowExpandedDialogAsync(dialog) != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var apps = dialog.SelectedApps;
+        ItemViewModel? last = null;
+        for (var i = 0; i < apps.Count; i++)
+        {
+            var item = new LauncherItem { Name = apps[i].Name, Path = apps[i].Path };
+            last = ViewModel.AddItem(item, tab, save: i == apps.Count - 1);
+        }
+
+        if (last is not null)
+        {
+            ItemGrid.SelectedItem = last;
+        }
+    }
+
+    private async Task<bool> ShowItemEditDialogAsync(ItemEditViewModel editor) =>
+        await ShowExpandedDialogAsync(new ItemEditDialog(editor, _hwnd)) == ContentDialogResult.Primary;
+
+    private async Task<ContentDialogResult> ShowExpandedDialogAsync(ContentDialog dialog)
     {
         // ダイアログが収まるよう、表示中のみウィンドウを広げる
         var original = new RectInt32(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
@@ -857,12 +1040,27 @@ public sealed partial class LauncherWindow : Window
 
         try
         {
-            var dialog = new ItemEditDialog(editor, _hwnd);
-            return await ShowDialogAsync(dialog) == ContentDialogResult.Primary;
+            return await ShowDialogAsync(dialog);
         }
         finally
         {
             AppWindow.MoveAndResize(original);
+        }
+    }
+
+    private async Task DeleteItemAsync(ItemViewModel item)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "アイテムを削除",
+            Content = $"「{item.Name}」を削除しますか?",
+            PrimaryButtonText = "削除",
+            CloseButtonText = "キャンセル",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary)
+        {
+            ViewModel.DeleteItem(item);
         }
     }
 

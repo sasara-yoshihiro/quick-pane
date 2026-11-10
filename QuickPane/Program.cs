@@ -10,8 +10,14 @@ namespace QuickPane;
 public static class Program
 {
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
+        // 管理者として実行中の QuickPane から、アイテムを通常の権限で起動するための起動用プロセスとして起動された場合
+        if (args.Length == 2 && args[0] == Core.Launching.UnelevatedLauncher.HelperOption)
+        {
+            return Core.Launching.UnelevatedLauncher.RunHelper(args[1]);
+        }
+
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
         using var instance = SingleInstance.Acquire();

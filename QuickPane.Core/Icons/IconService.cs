@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using log4net;
+using QuickPane.Core.Launching;
 using QuickPane.Core.Models;
 
 namespace QuickPane.Core.Icons;
@@ -26,6 +27,15 @@ public sealed class IconService
     private readonly SemaphoreSlim _gate = new(3);
 
     private readonly Dictionary<string, Task<string?>> _pending = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// アイコンの取得元。
+    /// </summary>
+    /// <param name="ImageFile">そのまま使用する画像ファイル (指定されている場合は取得しない)</param>
+    /// <param name="Key">キャッシュのキー</param>
+    /// <param name="Source">取得元 (ログ用)</param>
+    /// <param name="Extract">取得処理</param>
+    private sealed record IconSource(string? ImageFile, string Key, string Source, Func<IconBitmap?>? Extract);
 
     /// <summary>
     /// コンストラクタ。
@@ -56,6 +66,126 @@ public sealed class IconService
     /// <returns>画像ファイルのパス、取得できなかった場合は null</returns>
     public async Task<string?> GetIconFileAsync(string path, string iconPath, int size)
     {
+        var source = Describe(path, iconPath, size);
+        if (source is null)
+        {
+            return null;
+        }
+
+        return source.ImageFile ?? await GetOrCreateAsync(source.Key, source.Source, source.Extract!);
+    }
+
+    /// <summary>
+    /// アイコンの画像 (PNG 等) を取得する。キャッシュがあれば使用するが、新たにキャッシュは作成しない
+    /// (アプリ一覧・編集ダイアログのプレビュー等、一時的に表示するアイコン用)。
+    /// </summary>
+    /// <param name="path">アイテムのパス</param>
+    /// <param name="iconPath">アイコンの場所 ("ファイル,インデックス" 形式、空の場合はパスから取得)</param>
+    /// <param name="size">サイズ (ピクセル)</param>
+    /// <returns>画像のデータ、取得できなかった場合は null</returns>
+    public async Task<byte[]?> GetIconBytesAsync(string path, string iconPath, int size)
+    {
+        var source = Describe(path, iconPath, size);
+        if (source is null)
+        {
+            return null;
+        }
+
+        var file = source.ImageFile ?? Path.Combine(_cacheDirectory, CreateCacheName(source.Key));
+        if (source.ImageFile is not null || File.Exists(file))
+        {
+            try
+            {
+                return await Task.Run(() => File.ReadAllBytes(file)).WaitAsync(_timeout).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (source.ImageFile is not null)
+            {
+                Log.Warn($"アイコン画像を読み込めませんでした。{file} ({ex.GetType().Name}: {ex.Message})");
+                return null;
+            }
+            catch (Exception)
+            {
+                // キャッシュを読めない場合は取得し直す
+            }
+        }
+
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            var bitmap = await RunOnStaThreadAsync(source.Extract!, _timeout).ConfigureAwait(false);
+            if (bitmap is null)
+            {
+                return null;
+            }
+
+            using var stream = new MemoryStream();
+            PngWriter.Write(stream, bitmap);
+            return stream.ToArray();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"アイコンを取得できませんでした。{source.Source} ({ex.GetType().Name}: {ex.Message})");
+            return null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 登録アイテムで使用していないキャッシュ (削除・変更したアイテム、変更前のアイコンサイズのもの等) を削除する。
+    /// </summary>
+    /// <param name="items">登録アイテム (パス・アイコンの場所)</param>
+    /// <param name="size">現在のアイコンサイズ (ピクセル)</param>
+    public void PruneCache(IEnumerable<(string Path, string IconPath)> items, int size)
+    {
+        if (!Directory.Exists(_cacheDirectory))
+        {
+            return;
+        }
+
+        var used = items
+            .Select(i => Describe(i.Path, i.IconPath, size))
+            .Where(s => s is { ImageFile: null })
+            .Select(s => CreateCacheName(s!.Key))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var deleted = 0;
+        foreach (var file in Directory.EnumerateFiles(_cacheDirectory))
+        {
+            var name = Path.GetFileName(file);
+            var unused = name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                ? !used.Contains(name)
+                : File.GetLastWriteTimeUtc(file) < DateTime.UtcNow.AddHours(-1);   // 書き込み途中で残った一時ファイル
+            if (!unused)
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(file);
+                deleted++;
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"アイコンキャッシュを削除できませんでした。{file} ({ex.GetType().Name}: {ex.Message})");
+            }
+        }
+
+        if (deleted > 0)
+        {
+            Log.Info($"使用していないアイコンキャッシュを削除しました。{deleted} 件");
+        }
+    }
+
+    /// <summary>
+    /// アイコンの取得元 (キャッシュのキー・取得処理) を決める。
+    /// </summary>
+    /// <returns>取得元がない (パスが空) 場合は null</returns>
+    private IconSource? Describe(string path, string iconPath, int size)
+    {
         var expandedPath = Environment.ExpandEnvironmentVariables(path ?? string.Empty).Trim();
         if (!string.IsNullOrWhiteSpace(iconPath))
         {
@@ -63,10 +193,10 @@ public sealed class IconService
             if (ImageExtensions.Contains(Path.GetExtension(file)))
             {
                 // 画像ファイルはそのまま使用する
-                return file;
+                return new IconSource(file, string.Empty, file, null);
             }
 
-            return await GetOrCreateAsync($"res|{file}|{index}|{size}", file, () => IconExtractor.FromIconResource(file, index, size));
+            return new IconSource(null, $"res|{file}|{index}|{size}", file, () => IconExtractor.FromIconResource(file, index, size));
         }
 
         if (string.IsNullOrEmpty(expandedPath))
@@ -78,7 +208,7 @@ public sealed class IconService
         {
             // URL は関連付けられたアプリ (ブラウザ等) のアイコンを使用する
             var scheme = PathClassifier.GetScheme(expandedPath)!;
-            return await GetOrCreateAsync($"url|{scheme}|{size}", expandedPath, () =>
+            return new IconSource(null, $"url|{scheme}|{size}", expandedPath, () =>
             {
                 var location = IconExtractor.GetSchemeIconLocation(scheme);
                 if (location is null)
@@ -91,7 +221,7 @@ public sealed class IconService
             });
         }
 
-        return await GetOrCreateAsync($"shell|{expandedPath}|{size}", expandedPath, () => IconExtractor.FromShell(ResolveExecutable(expandedPath), size));
+        return new IconSource(null, $"shell|{expandedPath}|{size}", expandedPath, () => IconExtractor.FromShell(ResolveExecutable(expandedPath), size));
     }
 
     /// <summary>
@@ -216,7 +346,9 @@ public sealed class IconService
     {
         if (Path.IsPathRooted(path) || path.Contains('\\') || path.Contains('/'))
         {
-            return path;
+            // ストアアプリが更新されて exe のパスが変わった場合は、現在のバージョンの exe から取得する
+            // (アプリ一覧のパスはシェルからストアアプリのアイコンを取得できるため、そのまま使う)
+            return PackagedApp.IsAppsFolderPath(path) ? path : PackagedApp.ResolveFileSystemPath(path);
         }
 
         var fileName = Path.HasExtension(path) ? path : path + ".exe";

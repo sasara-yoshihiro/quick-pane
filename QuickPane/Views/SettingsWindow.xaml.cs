@@ -36,6 +36,7 @@ public sealed partial class SettingsWindow : Window
         InitializeComponent();
 
         _hwnd = WindowHelper.GetHandle(this);
+        Title = ViewModel.WindowTitle;
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "QuickPane.ico"));

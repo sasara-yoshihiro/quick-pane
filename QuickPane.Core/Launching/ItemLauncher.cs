@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using log4net;
 using QuickPane.Core.Models;
 
@@ -31,8 +32,6 @@ public sealed record LaunchResult(bool Success, bool Cancelled = false, string? 
 /// </summary>
 public static class ItemLauncher
 {
-    private const int ErrorCancelled = 1223;
-
     private static readonly ILog Log = LogManager.GetLogger(typeof(ItemLauncher));
 
     /// <summary>
@@ -57,14 +56,43 @@ public static class ItemLauncher
         return Task.Run(() => OpenLocation(snapshot));
     }
 
-    private static LaunchResult Launch(LauncherItem item, bool elevate)
+    /// <summary>
+    /// 起動する (起動用プロセスからも呼び出す)。
+    /// ストアアプリは exe を直接起動せず、AppUserModelID で起動する
+    /// (exe の直接起動では管理者として実行できず、アプリの更新で exe のパスも変わるため)。
+    /// </summary>
+    /// <param name="request">起動内容</param>
+    /// <param name="elevate">管理者として実行するかどうか</param>
+    /// <returns>起動した対象 (ログ用)</returns>
+    internal static string Start(LaunchRequest request, bool elevate)
     {
-        var path = Expand(item.Path);
+        var target = request.Path;
+        var workingDirectory = request.WorkingDirectory;
+        if (PackagedApp.TryGetAppUserModelId(request.Path, out var appUserModelId))
+        {
+            if (!elevate)
+            {
+                try
+                {
+                    AppActivator.Activate(appUserModelId, request.Arguments);
+                    return $"{PackagedApp.AppsFolderPrefix}{appUserModelId}";
+                }
+                catch (COMException ex)
+                {
+                    // 起動方法の違いで失敗する場合に備え、シェル経由でも起動を試みる
+                    Log.Warn($"アプリを起動できなかったため、シェル経由で起動します。AppUserModelID=\"{appUserModelId}\"", ex);
+                }
+            }
+
+            target = $"{PackagedApp.AppsFolderPrefix}{appUserModelId}";
+            workingDirectory = string.Empty;
+        }
+
         var startInfo = new ProcessStartInfo
         {
-            FileName = path,
-            Arguments = Expand(item.Arguments),
-            WorkingDirectory = ResolveWorkingDirectory(path, Expand(item.WorkingDirectory)),
+            FileName = target,
+            Arguments = request.Arguments,
+            WorkingDirectory = workingDirectory,
             UseShellExecute = true,
             ErrorDialog = false,
         };
@@ -73,13 +101,39 @@ public static class ItemLauncher
             startInfo.Verb = "runas";
         }
 
+        using var process = Process.Start(startInfo);
+        return target;
+    }
+
+    private static LaunchResult Launch(LauncherItem item, bool elevate)
+    {
+        var path = Expand(item.Path);
+        var request = new LaunchRequest(path, Expand(item.Arguments), ResolveWorkingDirectory(path, Expand(item.WorkingDirectory)));
+
+        // QuickPane を管理者として実行している場合、そのまま起動すると管理者権限を引き継ぐため、
+        // 管理者として実行しないアイテムは通常の権限の起動用プロセス経由で起動する
+        if (!elevate && Environment.IsPrivilegedProcess)
+        {
+            var result = UnelevatedLauncher.Launch(request);
+            if (result.Success)
+            {
+                Log.Info($"起動しました (通常の権限)。名前=\"{item.Name}\" パス=\"{path}\" 引数=\"{request.Arguments}\"");
+            }
+            else
+            {
+                Log.Error($"起動に失敗しました (通常の権限)。名前=\"{item.Name}\" パス=\"{path}\" {result.ErrorMessage}");
+            }
+
+            return result;
+        }
+
         try
         {
-            using var process = Process.Start(startInfo);
-            Log.Info($"起動しました。名前=\"{item.Name}\" パス=\"{path}\" 引数=\"{startInfo.Arguments}\" 管理者={elevate}");
+            var target = Start(request, elevate);
+            Log.Info($"起動しました。名前=\"{item.Name}\" パス=\"{target}\" 引数=\"{request.Arguments}\" 管理者={elevate}");
             return LaunchResult.Succeeded;
         }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
+        catch (Win32Exception ex) when (ex.NativeErrorCode == LaunchErrorMessages.ErrorCancelled)
         {
             Log.Info($"起動がキャンセルされました。名前=\"{item.Name}\" パス=\"{path}\"");
             return LaunchResult.CancelledByUser;
@@ -98,10 +152,13 @@ public static class ItemLauncher
 
     private static LaunchResult OpenLocation(LauncherItem item)
     {
-        var path = Expand(item.Path).TrimEnd('\\', '/');
+        // ストアアプリが更新されている場合・アプリ一覧のパスの場合は、実際の exe のパスを使う
+        var path = PackagedApp.ResolveFileSystemPath(Expand(item.Path)).TrimEnd('\\', '/');
         if (PathClassifier.IsUrl(path))
         {
-            return LaunchResult.Failed("URL のため、場所を開くことはできません。");
+            return LaunchResult.Failed(PackagedApp.IsAppsFolderPath(path)
+                ? "このアプリはファイルの場所を取得できません。"
+                : "URL のため、場所を開くことはできません。");
         }
 
         try
@@ -111,12 +168,21 @@ public static class ItemLauncher
                 return LaunchResult.Failed(LaunchErrorMessages.FromWin32(2, false, string.Empty));
             }
 
-            using var process = Process.Start(new ProcessStartInfo
+            var request = new LaunchRequest("explorer.exe", $"/select,\"{path}\"", string.Empty);
+            if (Environment.IsPrivilegedProcess)
             {
-                FileName = "explorer.exe",
-                Arguments = $"/select,\"{path}\"",
-                UseShellExecute = true,
-            });
+                // 管理者権限のエクスプローラが起動しないよう、通常の権限で開く
+                var result = UnelevatedLauncher.Launch(request);
+                if (!result.Success)
+                {
+                    return result;
+                }
+            }
+            else
+            {
+                Start(request, elevate: false);
+            }
+
             Log.Info($"ファイルの場所を開きました。パス=\"{path}\"");
             return LaunchResult.Succeeded;
         }
