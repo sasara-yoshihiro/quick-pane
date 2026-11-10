@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="QuickPane.Views.AppPickerDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:helpers="using:QuickPane.Helpers"
+    xmlns:local="using:QuickPane.Views"
+    Title="アプリ一覧から追加"
+    CloseButtonText="キャンセル"
+    DefaultButton="Primary"
+    IsPrimaryButtonEnabled="False"
+    PrimaryButtonText="追加">
+
+    <Grid Width="440" RowSpacing="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="380" />
+        </Grid.RowDefinitions>
+
+        <TextBlock
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="スタートメニューのアプリ (ストアアプリを含む) から選択します。複数選択できます。"
+            TextWrapping="Wrap" />
+
+        <TextBox
+            x:Name="SearchBox"
+            Grid.Row="1"
+            PlaceholderText="アプリ名で絞り込み"
+            TextChanged="SearchBox_TextChanged" />
+
+        <ListView
+            x:Name="AppList"
+            Grid.Row="2"
+            ContainerContentChanging="AppList_ContainerContentChanging"
+            SelectionChanged="AppList_SelectionChanged"
+            SelectionMode="Multiple">
+            <ListView.ItemTemplate>
+                <DataTemplate x:DataType="local:InstalledAppItem">
+                    <Grid Height="40" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="24" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon
+                            FontSize="18"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Glyph="&#xECAA;"
+                            Visibility="{x:Bind helpers:Bind.VisibleIfNull(Icon), Mode=OneWay}" />
+                        <Image
+                            Width="24"
+                            Height="24"
+                            Source="{x:Bind Icon, Mode=OneWay}" />
+                        <TextBlock
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Text="{x:Bind Name}"
+                            TextTrimming="CharacterEllipsis"
+                            ToolTipService.ToolTip="{x:Bind Name}" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <StackPanel
+            x:Name="LoadingPanel"
+            Grid.Row="2"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Spacing="8">
+            <ProgressRing IsActive="True" />
+            <TextBlock x:Name="LoadingText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="アプリ一覧を取得しています..." />
+        </StackPanel>
+    </Grid>
+</ContentDialog>
